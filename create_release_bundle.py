@@ -2,19 +2,20 @@
 """
 Create release bundle for dissertation
 """
-import os, glob, json, shutil, pandas as pd, pathlib
+import os, glob, json, shutil, pandas as pd
 import csv
 
 def create_release_bundle():
     # Create output directory
-    out = pathlib.Path("outputs/release_v1.2.0")
-    out.mkdir(parents=True, exist_ok=True)
-    print(f"Created directory: {out}")
+    out = os.path.join("outputs", "release_v1.2.0")
+    if not os.path.exists(out):
+        os.makedirs(out)
+    print("Created directory: {}".format(out))
 
     # Collect per-run essentials
     rows = []
     run_dirs = sorted(glob.glob("outputs/run_seed_*_hash_*"))
-    print(f"Found {len(run_dirs)} run directories")
+    print("Found {} run directories".format(len(run_dirs)))
 
     for d in run_dirs:
         m = os.path.join(d, "manifest.json")
@@ -23,7 +24,7 @@ def create_release_bundle():
         ov = os.path.join(d, "overrides.csv")
 
         files_exist = all(os.path.exists(f) for f in [m, o, g, ov])
-        print(f"  {os.path.basename(d)}: files exist = {files_exist}")
+        print("  {}: files exist = {}".format(os.path.basename(d), files_exist))
 
         if not files_exist:
             continue
@@ -46,20 +47,20 @@ def create_release_bundle():
                 "seed": man.get("seed"),
                 "paths": {"dir": d}
             })
-            print(f"    Added: scenario={man.get('scenario')}, util={utilization}")
+            print("    Added: scenario={}, util={}".format(man.get('scenario'), utilization))
         except Exception as e:
-            print(f"    Error reading manifest: {e}")
+            print("    Error reading manifest: {}".format(e))
 
-    print(f"Collected {len(rows)} valid runs")
+    print("Collected {} valid runs".format(len(rows)))
 
     # Write run_manifest.csv
-    manifest_file = out / "run_manifest.csv"
-    with open(manifest_file, "w", newline="") as f:
+    manifest_file = os.path.join(out, "run_manifest.csv")
+    with open(manifest_file, "w") as f:
         w = csv.DictWriter(f, fieldnames=["run", "scenario", "utilization", "config_hash", "seed"])
         w.writeheader()
         for r in rows:
             w.writerow({k: r[k] for k in w.fieldnames})
-    print(f"Wrote run_manifest.csv with {len(rows)} runs")
+    print("Wrote run_manifest.csv with {} runs".format(len(rows)))
 
     # Build consolidated results table
     def load_overall(row):
@@ -85,34 +86,34 @@ def create_release_bundle():
                 df = load_overall(r)
                 all_dfs.append(df)
             except Exception as e:
-                print(f"Error loading {r['run']}: {e}")
+                print("Error loading {}: {}".format(r['run'], e))
 
         if all_dfs:
-            all_overall = pd.concat(all_dfs, ignore_index=True)
+            all_overall = pd.concat([df for df in all_dfs if df is not None and not df.empty], ignore_index=True)
 
             # Define columns to keep (filter to what's actually available)
             desired_cols = ["scenario", "utilization", "subgroup", "mean_wait", "P90", "P95",
                           "same_day_rate", "within_3d_rate", "within_14d_rate",
                           "high_risk_same_day_share", "override_rate", "run"]
             available_cols = [col for col in desired_cols if col in all_overall.columns]
-            print(f"Available columns: {available_cols}")
+            print("Available columns: {}".format(available_cols))
 
             # Sort and save
             result_df = all_overall[available_cols].sort_values(["scenario", "utilization", "subgroup"])
-            result_df.to_csv(out / "main_table.csv", index=False)
-            print(f"Wrote main_table.csv with {len(result_df)} rows")
+            result_df.to_csv(os.path.join(out, "main_table.csv"), index=False)
+            print("Wrote main_table.csv with {} rows".format(len(result_df)))
         else:
             print("No valid overall data found")
 
     # Copy equity figure if present
-    plot = pathlib.Path("outputs/plots/main_equity_vs_util.png")
-    if plot.exists():
-        shutil.copy(plot, out / plot.name)
+    plot = os.path.join("outputs", "plots", "main_equity_vs_util.png")
+    if os.path.exists(plot):
+        shutil.copy(plot, os.path.join(out, os.path.basename(plot)))
         print("Copied equity figure")
     else:
         print("No equity figure found at outputs/plots/main_equity_vs_util.png")
 
-    print(f"Release bundle written to: {out}")
+    print("Release bundle written to: {}".format(out))
     return out
 
 if __name__ == "__main__":
