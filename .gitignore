@@ -1,6 +1,7 @@
 __pycache__/
 .pytest_cache/
-outputs/
+outputs/*
+!outputs/.gitkeep
 .DS_Store
 *.parquet
 *.arrow
