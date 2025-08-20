@@ -73,7 +73,8 @@ def run(
             "sim_version": "1.0.0",
             "params_hash": h,
             "seed": s,
-            "scenario": cfg.sim.scenario,   # <— add this
+            "scenario": cfg.sim.scenario,
+            "utilization": getattr(cfg.sim, "utilization", None),
             "config_path": str(Path(config).resolve()),
         })
         overall_path = os.path.join(run_dir, "overall.csv")
