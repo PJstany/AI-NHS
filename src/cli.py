@@ -14,11 +14,34 @@ from .utils import write_manifest
 app = typer.Typer(add_completion=False, help="GP access simulation CLI")
 
 @app.command()
-def run(config: str = typer.Argument("params.yaml"),
-        seed: Optional[int] = typer.Option(None),
-        out_dir: Optional[str] = typer.Option(None)):
+def run(
+    config: str = typer.Argument("params.yaml"),
+    seed: Optional[int] = typer.Option(None, help="override single seed"),
+    out_dir: Optional[str] = typer.Option(None, help="override output directory"),
+    # NEW:
+    scenario: Optional[str] = typer.Option(
+        None,
+        help="override scenario: baseline | ai_only | imperfect_ai | hybrid",
+    ),
+    utilization: Optional[float] = typer.Option(
+        None,
+        help="override utilization multiplier (e.g., 1.1)",
+    ),
+):
     cfg = load_config(config)
-    out_dir = out_dir or cfg.output.out_dir
+    # NEW: apply overrides if provided
+    if scenario is not None:
+        if scenario not in {"baseline", "ai_only", "imperfect_ai", "hybrid"}:
+            raise typer.BadParameter("scenario must be baseline|ai_only|imperfect_ai|hybrid")
+        cfg.sim.scenario = scenario
+    if utilization is not None:
+        cfg.sim.utilization = utilization
+    # Fix: ensure out_dir is a string, not OptionInfo
+    if not isinstance(out_dir, str) or not out_dir:
+        out_dir = cfg.output.out_dir
+    # Fix: ensure seed is None or int, not OptionInfo
+    if not (isinstance(seed, int) or seed is None):
+        seed = None
     ensure_out_dir(out_dir)
     h = cfg_hash(cfg)
 
@@ -31,8 +54,15 @@ def run(config: str = typer.Argument("params.yaml"),
         run_dir = os.path.join(out_dir, run_name)
         os.makedirs(run_dir, exist_ok=True)
         df.to_csv(os.path.join(run_dir, "events.csv"), index=False)
-        if cfg.output.write_overrides_log and len(sim.override_log):
-            pd.DataFrame(sim.override_log).to_csv(os.path.join(run_dir, "overrides.csv"), index=False)
+        # always write overrides.csv when enabled (even if empty)
+        if cfg.output.write_overrides_log:
+            ov_path = os.path.join(run_dir, "overrides.csv")
+            if len(sim.override_log):
+                pd.DataFrame(sim.override_log).to_csv(ov_path, index=False)
+            else:
+                pd.DataFrame(columns=[
+                    "day","session","queue_len","pid","uncertainty","time_of_day","overridden","prob"
+                ]).to_csv(ov_path, index=False)
         summ = summarize(df, {
             "same_day": cfg.thresholds_days.same_day,
             "within_3d": cfg.thresholds_days.within_3d,
@@ -43,6 +73,7 @@ def run(config: str = typer.Argument("params.yaml"),
             "sim_version": "1.0.0",
             "params_hash": h,
             "seed": s,
+            "scenario": cfg.sim.scenario,   # <— add this
             "config_path": str(Path(config).resolve()),
         })
         overall_path = os.path.join(run_dir, "overall.csv")
@@ -55,16 +86,15 @@ def run(config: str = typer.Argument("params.yaml"),
 def sweep(configs: List[str] = typer.Argument(...),
           parallel: bool = typer.Option(True, help="Use joblib Parallel")):
     from joblib import Parallel, delayed
-    def _one(conf):
-        try:
-            run([conf])  # reuse command
-        except SystemExit:
-            pass
+    def _one(conf: str):
+        # Call the function directly with a string path
+        run(config=conf)
 
     if parallel:
         Parallel(n_jobs=-1)(delayed(_one)(c) for c in configs)
     else:
-        for c in configs: _one(c)
+        for c in configs:
+            _one(c)
 
 @app.command()
 def aggregate(out_dir: str = typer.Argument("outputs")):

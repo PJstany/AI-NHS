@@ -1,0 +1,50 @@
+sim:
+  days: 30
+  sessions_per_day: 2
+  slots_per_session: 60
+  seeds:
+  - 101
+  - 102
+  - 103
+  scenario: ai_only
+  utilization: 1.0
+arrivals:
+  urgent_rate_per_day: 18
+  routine_rate_per_day: 120
+  digital_access_gap:
+    A: 1.0
+    B: 0.8
+patience_days:
+  urgent_mean: 7
+  routine_mean: 3
+service_mixtures:
+  short_mean: 10
+  long_mean: 25
+  long_weight: 0.3
+no_show:
+  probability: 0.07
+  reschedule_rule: backlog
+bias_calibration:
+  slope:
+    A: 1.0
+    B: 0.8
+  intercept:
+    A: 0.0
+    B: 0.2
+  noise_sd:
+    A: 0.05
+    B: 0.1
+  score_inflation: 0.0
+overrides:
+  target_rate: 0.25
+  beta_uncertainty: 1.5
+  beta_queue: 0.1
+  beta_time_of_day: 0.2
+  sd_clinician_random_effect: 0.5
+thresholds_days:
+  same_day: 0
+  within_3d: 3
+  within_14d: 14
+output:
+  out_dir: outputs
+  write_overrides_log: true
