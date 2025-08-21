@@ -19,12 +19,14 @@ def check_override_rates():
                 rate = ov["overridden"].mean() if "overridden" in ov and len(ov) else float("nan")
                 rows.append({
                     "run": os.path.basename(d),
-                    "utilization": man.get("utilization", None),
+                    "utilization": man.get("utilization", "unknown"),
                     "override_rate": rate
                 })
     df = pd.DataFrame(rows).sort_values(["utilization", "run"])
     if not df.empty:
         print(df.to_string(index=False))
+        print(f"\nOverride rates range: {df['override_rate'].min():.3f} - {df['override_rate'].max():.3f}")
+        print(f"Mean override rate: {df['override_rate'].mean():.3f}")
     else:
         print("No hybrid runs with overrides.csv found.")
     print()
@@ -38,19 +40,33 @@ def check_stress_tails():
         o = os.path.join(d, "overall.csv")
         if os.path.exists(m) and os.path.exists(o):
             man = json.load(open(m))
-            util = man.get("utilization", None)
-            if man.get("scenario") == "hybrid" and util and util >= 1.1:
+            util = man.get("utilization")
+            try:
+                util_float = float(util) if util is not None else None
+            except:
+                util_float = None
+
+            if man.get("scenario") == "hybrid" and util_float and util_float >= 1.1:
                 over = pd.read_csv(o)
-                rows += [{
-                    "run": os.path.basename(d),
-                    "utilization": util,
-                    **over_query
-                } for over_query in over[["subgroup", "P90", "P95", "urgent_breach_rate"]].to_dict("records")]
+                available_cols = ["subgroup", "P90", "P95"]
+                # Add urgent_breach_rate if it exists
+                if "urgent_breach_rate" in over.columns:
+                    available_cols.append("urgent_breach_rate")
+
+                for _, row in over[available_cols].iterrows():
+                    row_dict = {
+                        "run": os.path.basename(d),
+                        "utilization": util,
+                    }
+                    row_dict.update(row.to_dict())
+                    rows.append(row_dict)
+
     df = pd.DataFrame(rows).sort_values(["utilization", "subgroup"]) if rows else pd.DataFrame()
     if not df.empty:
         print(df.to_string(index=False))
+        print(f"\nStress conditions found in {len(df)} subgroup-run combinations")
     else:
-        print("No stressed hybrid runs (util >= 1.1) found.")
+        print("No stress conditions (util >= 1.1) found.")
     print()
 
 def check_equity_signals():
@@ -76,9 +92,30 @@ def check_equity_signals():
         print("No hybrid gaps with utilization recorded.")
     print()
 
+def check_scenario_coverage():
+    """Check we have all expected scenarios"""
+    print("=== 4. Scenario coverage ===")
+    runs = glob.glob("outputs/run_seed_*_hash_*")
+    scenarios = set()
+    for d in runs:
+        m = os.path.join(d, "manifest.json")
+        if os.path.exists(m):
+            man = json.load(open(m))
+            scenarios.add(man.get("scenario", "unknown"))
+
+    expected = {"baseline", "ai_only", "imperfect_ai", "hybrid"}
+    print(f"Found scenarios: {sorted(scenarios)}")
+    print(f"Expected scenarios: {sorted(expected)}")
+    missing = expected - scenarios
+    if missing:
+        print(f"⚠️  Missing scenarios: {missing}")
+    else:
+        print("✅ All expected scenarios present")
+    print()
+
 def comprehensive_results_table():
     """Generate comprehensive results table"""
-    print("=== 4. Comprehensive Results Table ===")
+    print("=== 5. Comprehensive Results Table ===")
     rows = []
     for d in glob.glob("outputs/run_seed_*_hash_*"):
         m = os.path.join(d, "manifest.json")
@@ -115,8 +152,16 @@ def comprehensive_results_table():
     tbl = newer[keep].sort_values(["scenario", "utilization", "subgroup"])
     print(tbl.to_string(index=False))
 
-if __name__ == "__main__":
+def main():
+    """Run all quality checks"""
+    print("Quality Check Report")
+    print("=" * 50)
     check_override_rates()
     check_stress_tails()
     check_equity_signals()
+    check_scenario_coverage()
     comprehensive_results_table()
+    print("Quality check complete!")
+
+if __name__ == "__main__":
+    main()

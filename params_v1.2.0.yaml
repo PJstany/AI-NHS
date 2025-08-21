@@ -55,3 +55,6 @@ thresholds_days:
 output:
   out_dir: "outputs"
   write_overrides_log: true
+
+analysis:
+  warmup_days: 14

@@ -66,6 +66,9 @@ class OutputCfg(BaseModel):
     out_dir: str
     write_overrides_log: bool = False
 
+class AnalysisCfg(BaseModel):
+    warmup_days: int = Field(ge=0, default=0)
+
 class RootCfg(BaseModel):
     sim: SimCfg
     arrivals: ArrivalsCfg
@@ -76,6 +79,7 @@ class RootCfg(BaseModel):
     overrides: OverridesCfg
     thresholds_days: ThresholdsCfg
     output: OutputCfg
+    analysis: AnalysisCfg = AnalysisCfg()
 
 def load_config(path: str) -> RootCfg:
     with open(path, "r") as f:
@@ -93,4 +97,3 @@ def cfg_hash(cfg: RootCfg) -> str:
 
 def ensure_out_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
-

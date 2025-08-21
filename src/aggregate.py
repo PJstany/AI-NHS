@@ -7,7 +7,10 @@ import polars as pl
 
 from .metrics import kpi_flags, equity_summary, risk_deciles, high_risk_same_day_share
 
-def summarize(df: pd.DataFrame, thresholds: Dict[str, int]) -> Dict:
+def summarize(df: pd.DataFrame, thresholds: Dict[str, int], warmup_days: int = 0) -> Dict:
+    # Apply warm-up filter if requested
+    if warmup_days and "arrival_day" in df.columns:
+        df = df[df["arrival_day"] >= warmup_days].copy()
     df = kpi_flags(df, thresholds["same_day"], thresholds["within_3d"], thresholds["within_14d"])
     overall, gaps = equity_summary(df[df["attended"] == True].copy())
     deciles = risk_deciles(df[df["attended"] == True].copy())

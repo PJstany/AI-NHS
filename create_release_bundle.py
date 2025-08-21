@@ -4,10 +4,14 @@ Create release bundle for dissertation
 """
 import os, glob, json, shutil, pandas as pd
 import csv
+import sys
 
-def create_release_bundle():
-    # Create output directory
-    out = os.path.join("outputs", "release_v1.2.0")
+def create_release_bundle(out_dir=None):
+    # Determine output directory
+    if out_dir is None:
+        out = os.path.join("outputs", "release_v1.2.0")
+    else:
+        out = out_dir
     if not os.path.exists(out):
         os.makedirs(out)
     print("Created directory: {}".format(out))
@@ -117,4 +121,6 @@ def create_release_bundle():
     return out
 
 if __name__ == "__main__":
-    create_release_bundle()
+    # Allow output directory as optional argument
+    out_dir = sys.argv[1] if len(sys.argv) > 1 else None
+    create_release_bundle(out_dir)
