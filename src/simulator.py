@@ -83,86 +83,216 @@ class Simulation:
 
     # --- core loop --------------------------------------------------
     def run(self) -> pd.DataFrame:
-        sessions = self.cfg.sim.sessions_per_day
-        slots = self.cfg.sim.slots_per_session
+        """
+        Run the full simulation over all days.
+
+        Returns:
+            DataFrame with all patient events and outcomes
+        """
         days = self.cfg.sim.days
-        no_show_p = self.cfg.no_show.probability
+        sessions_per_day = self.cfg.sim.sessions_per_day
 
-        # daily loop with carry-over backlog
+        # Daily loop with carry-over backlog
         for day in range(days):
-            # 1) arrivals
-            todays_new = self.new_arrivals(day)
-            self.backlog.extend(todays_new)
+            self._process_daily_arrivals(day)
+            self._update_backlog_with_reneging(day)
 
-            # remove patients who renege (patience expired)
-            self.backlog = [p for p in self.backlog if (day - p.arrival_day) <= p.patience_days]
-            for p in self.backlog:
-                p.wait_days = max(0.0, day - p.arrival_day)
+            for session in range(sessions_per_day):
+                self._schedule_session(day, session, sessions_per_day)
 
-            # 2) sessions
-            for s in range(sessions):
-                time_of_day = (s / max(1, sessions - 1)) - 0.5  # now in [-0.5, +0.5]
-                # available slots may be stressed by utilization factor
-                capacity = max(0, math.floor(self.cfg.sim.slots_per_session / self.cfg.sim.utilization))
+        return self._finalize_results()
 
-                for k in range(capacity):
-                    if not self.backlog:
-                        break
-                    # sort by AI priority (higher pred_risk first, urgent before routine)
-                    self.backlog.sort(key=lambda p: (p.pred_risk, p.pclass=="urgent"), reverse=True)
-                    candidate = self.backlog[0]
+    def _process_daily_arrivals(self, day: int) -> None:
+        """Add new patient arrivals to the backlog."""
+        new_arrivals = self.new_arrivals(day)
+        self.backlog.extend(new_arrivals)
 
-                    # In hybrid, decide whether to override AI recommendation
-                    overridden = False
-                    if self.cfg.sim.scenario == "hybrid":
-                        uncertainty = 1.0 - candidate.confidence
-                        q_signal = math.log1p(len(self.backlog))  # scale backlog pressure
-                        clinician_re = float(self.rng.normal(0, self.cfg.overrides.sd_clinician_random_effect))
-                        prob = override_probability(
-                            uncertainty=uncertainty,
-                            queue_len=q_signal,
-                            time_of_day_factor=time_of_day,
-                            beta_uncertainty=self.cfg.overrides.beta_uncertainty,
-                            beta_queue=self.cfg.overrides.beta_queue,
-                            beta_time_of_day=self.cfg.overrides.beta_time_of_day,
-                            intercept=self.override_intercept,
-                            clinician_re=clinician_re
-                        )
-                        if self.rng.random() < prob:
-                            overridden = True
-                            # pick next best urgent or FCFS as a simple override behavior
-                            alt_idx = 1 if len(self.backlog) > 1 else 0
-                            candidate = self.backlog[alt_idx]
+    def _update_backlog_with_reneging(self, day: int) -> None:
+        """
+        Remove patients who have exceeded their patience threshold.
+        Update wait times for remaining patients.
+        """
+        # Remove patients who renege (patience expired)
+        self.backlog = [
+            p for p in self.backlog
+            if (day - p.arrival_day) <= p.patience_days
+        ]
 
-                        self.override_log.append({
-                            "day": day, "session": s, "queue_len": len(self.backlog),
-                            "pid": candidate.pid, "uncertainty": float(uncertainty),
-                            "time_of_day": float(time_of_day), "overridden": overridden, "prob": float(prob)
-                        })
+        # Update wait times
+        for p in self.backlog:
+            p.wait_days = max(0.0, day - p.arrival_day)
 
-                    # schedule candidate
-                    self.backlog.remove(candidate)
-                    candidate.scheduled_day = day
-                    # no-show
-                    candidate.no_show = bool(self.rng.random() < no_show_p)
-                    if candidate.no_show:
-                        if self.cfg.no_show.reschedule_rule == "backlog":
-                            # re-enter backlog with the same arrival_day (continue wait)
-                            self.backlog.append(candidate)
-                        else:
-                            candidate.attended = False
-                    else:
-                        candidate.attended = True
-                        self.patients.append(candidate)
+    def _schedule_session(self, day: int, session: int, total_sessions: int) -> None:
+        """
+        Schedule patients for a single session.
 
-            # end of day loop continues with remaining backlog
+        Args:
+            day: Current simulation day
+            session: Session number within the day
+            total_sessions: Total sessions per day (for time-of-day calculation)
+        """
+        # Calculate session parameters
+        time_of_day = (session / max(1, total_sessions - 1)) - 0.5  # in [-0.5, +0.5]
+        capacity = max(0, math.floor(
+            self.cfg.sim.slots_per_session / self.cfg.sim.utilization
+        ))
 
-        # finalize dataframe
-        df = pd.DataFrame([p.__dict__ for p in (self.patients + self.backlog)])
+        # Fill all available slots
+        for _ in range(capacity):
+            if not self.backlog:
+                break
+
+            candidate = self._select_patient_for_slot(day, session, time_of_day)
+            if candidate:
+                self._handle_appointment(candidate, day)
+
+    def _select_patient_for_slot(
+        self,
+        day: int,
+        session: int,
+        time_of_day: float
+    ) -> Optional[Patient]:
+        """
+        Select next patient for scheduling, applying clinical override logic if applicable.
+
+        Args:
+            day: Current simulation day
+            session: Session number
+            time_of_day: Normalized time of day factor [-0.5, +0.5]
+
+        Returns:
+            Selected patient, or None if backlog is empty
+        """
+        if not self.backlog:
+            return None
+
+        # Sort by AI priority (higher pred_risk first, urgent before routine)
+        self.backlog.sort(
+            key=lambda p: (p.pred_risk, p.pclass == "urgent"),
+            reverse=True
+        )
+
+        candidate = self.backlog[0]
+        overridden = False
+
+        # Apply clinical override logic for hybrid scenario
+        if self.cfg.sim.scenario == "hybrid":
+            candidate, overridden = self._apply_clinical_override(
+                candidate, day, session, time_of_day
+            )
+
+        return candidate
+
+    def _apply_clinical_override(
+        self,
+        ai_recommendation: Patient,
+        day: int,
+        session: int,
+        time_of_day: float
+    ) -> Tuple[Patient, bool]:
+        """
+        Determine if clinician overrides AI recommendation and select alternative.
+
+        Args:
+            ai_recommendation: Patient recommended by AI (top of sorted backlog)
+            day: Current simulation day
+            session: Session number
+            time_of_day: Normalized time of day factor
+
+        Returns:
+            Tuple of (selected_patient, was_overridden)
+        """
+        uncertainty = 1.0 - ai_recommendation.confidence
+        q_signal = math.log1p(len(self.backlog))  # backlog pressure
+        clinician_re = float(
+            self.rng.normal(0, self.cfg.overrides.sd_clinician_random_effect)
+        )
+
+        # Calculate override probability
+        prob = override_probability(
+            uncertainty=uncertainty,
+            queue_len=q_signal,
+            time_of_day_factor=time_of_day,
+            beta_uncertainty=self.cfg.overrides.beta_uncertainty,
+            beta_queue=self.cfg.overrides.beta_queue,
+            beta_time_of_day=self.cfg.overrides.beta_time_of_day,
+            intercept=self.override_intercept,
+            clinician_re=clinician_re
+        )
+
+        # Decide whether to override
+        overridden = self.rng.random() < prob
+        if overridden:
+            # Pick alternative: next in line or FCFS
+            alt_idx = 1 if len(self.backlog) > 1 else 0
+            selected = self.backlog[alt_idx]
+        else:
+            selected = ai_recommendation
+
+        # Log the decision
+        self.override_log.append({
+            "day": day,
+            "session": session,
+            "queue_len": len(self.backlog),
+            "pid": selected.pid,
+            "uncertainty": float(uncertainty),
+            "time_of_day": float(time_of_day),
+            "overridden": overridden,
+            "prob": float(prob)
+        })
+
+        return selected, overridden
+
+    def _handle_appointment(self, patient: Patient, day: int) -> None:
+        """
+        Process patient appointment: schedule, check for no-show, handle outcome.
+
+        Args:
+            patient: Patient to schedule
+            day: Current simulation day
+        """
+        # Remove from backlog
+        self.backlog.remove(patient)
+        patient.scheduled_day = day
+
+        # Determine if patient shows up
+        no_show_p = self.cfg.no_show.probability
+        patient.no_show = bool(self.rng.random() < no_show_p)
+
+        if patient.no_show:
+            # Handle no-show based on reschedule rule
+            if self.cfg.no_show.reschedule_rule == "backlog":
+                # Re-enter backlog (maintains original arrival_day)
+                self.backlog.append(patient)
+            else:
+                # Drop from system
+                patient.attended = False
+                self.patients.append(patient)
+        else:
+            # Patient attended
+            patient.attended = True
+            self.patients.append(patient)
+
+    def _finalize_results(self) -> pd.DataFrame:
+        """
+        Convert simulation results to DataFrame and compute breach flags.
+
+        Returns:
+            Complete results DataFrame
+        """
+        # Combine attended patients and remaining backlog
+        all_patients = self.patients + self.backlog
+
+        df = pd.DataFrame([p.__dict__ for p in all_patients])
         df["wait_days"] = df["wait_days"].fillna(0.0)
+
+        # Compute breach flags
         df["breach_same_day"] = df["wait_days"] > self.cfg.thresholds_days.same_day
         df["breach_3d"] = df["wait_days"] > self.cfg.thresholds_days.within_3d
         df["breach_14d"] = df["wait_days"] > self.cfg.thresholds_days.within_14d
+
+        # Ensure pred_risk exists
         if "pred_risk" not in df.columns:
             df["pred_risk"] = 0.5
+
         return df
