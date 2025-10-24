@@ -54,7 +54,7 @@ def _write_one_run(cfg, out_dir: str, seed: int) -> str:
         "within_3d": cfg.thresholds_days.within_3d,
         "within_14d": cfg.thresholds_days.within_14d,
     }
-    summ = summarize(df, thr)
+    summ = summarize(df, thr, warmup_days=cfg.analysis.warmup_days, compute_ci=False)
     save_summary(run_dir, summ)
 
     # manifest (provenance)
@@ -173,22 +173,79 @@ def sweep_overrides(
     typer.echo("Wrote {}".format(out_csv))
 
 @app.command()
-def aggregate(out_dir: str = typer.Argument("outputs")):
+def aggregate(
+    out_dir: str = typer.Argument("outputs"),
+    with_ci: bool = typer.Option(False, "--with-ci", help="Compute bootstrap CIs across seeds")
+):
+    """
+    Aggregate results from multiple simulation runs.
+
+    Combines overall.csv files from all runs and optionally computes
+    bootstrap confidence intervals across seeds for key metrics.
+    """
     import glob
+    from .aggregate import bootstrap_ci
     frames = []
     for d in glob.glob(os.path.join(out_dir, "run_seed_*_hash_*")):
         f = os.path.join(d, "overall.csv")
+        manifest = os.path.join(d, "manifest.json")
         if os.path.exists(f):
             df = pd.read_csv(f)
             df["run"] = os.path.basename(d)
+            # Attach metadata from manifest if available
+            if os.path.exists(manifest):
+                meta = json.load(open(manifest))
+                df["seed"] = meta.get("seed")
+                df["scenario"] = meta.get("scenario")
+                df["utilization"] = meta.get("utilization")
             frames.append(df)
     if not frames:
         typer.echo("No runs found.")
         raise typer.Exit(code=0)
+
     all_overall = pd.concat(frames, ignore_index=True)
     out = os.path.join(out_dir, "aggregate_overall.csv")
     all_overall.to_csv(out, index=False)
     typer.echo("Wrote {}".format(out))
+
+    # Compute cross-seed summary with CIs if requested
+    if with_ci and "seed" in all_overall.columns and "scenario" in all_overall.columns:
+        summary_rows = []
+        for (scenario, util, subgroup), grp in all_overall.groupby(["scenario", "utilization", "subgroup"]):
+            if len(grp) < 2:
+                continue
+
+            mean_waits = grp["mean_wait"].values
+            p90s = grp["P90"].values if "P90" in grp.columns else []
+            p95s = grp["P95"].values if "P95" in grp.columns else []
+
+            mean_ci = bootstrap_ci(mean_waits, reps=1000)
+            p90_ci = bootstrap_ci(p90s, reps=1000) if len(p90s) > 0 else (None, None)
+            p95_ci = bootstrap_ci(p95s, reps=1000) if len(p95s) > 0 else (None, None)
+
+            summary_rows.append({
+                "scenario": scenario,
+                "utilization": util,
+                "subgroup": subgroup,
+                "n_seeds": len(grp),
+                "mean_wait_avg": mean_waits.mean(),
+                "mean_wait_ci_lo": mean_ci[0],
+                "mean_wait_ci_hi": mean_ci[1],
+                "P90_avg": p90s.mean() if len(p90s) > 0 else None,
+                "P90_ci_lo": p90_ci[0],
+                "P90_ci_hi": p90_ci[1],
+                "P95_avg": p95s.mean() if len(p95s) > 0 else None,
+                "P95_ci_lo": p95_ci[0],
+                "P95_ci_hi": p95_ci[1],
+            })
+
+        if summary_rows:
+            summary_df = pd.DataFrame(summary_rows)
+            summary_out = os.path.join(out_dir, "aggregate_with_ci.csv")
+            summary_df.to_csv(summary_out, index=False)
+            typer.echo("Wrote cross-seed summary with CIs: {}".format(summary_out))
+            print("\nCross-seed summary (with 95% bootstrap CIs):")
+            print(summary_df.to_string(index=False))
 
 @app.command()
 def version():

@@ -19,6 +19,24 @@ def risk_deciles(df: pd.DataFrame, by: str = "subgroup") -> pd.DataFrame:
     return g["wait_days"].mean().reset_index(name="mean_wait")
 
 def equity_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute equity summary statistics by subgroup.
+
+    Args:
+        df: DataFrame with patient events (should be filtered to attended=True)
+
+    Returns:
+        Tuple of (overall_summary, equity_gaps) DataFrames
+    """
+    # Handle empty dataframe
+    if len(df) == 0 or "subgroup" not in df.columns:
+        empty_overall = pd.DataFrame(columns=[
+            "subgroup", "n", "mean_wait", "median_wait", "P90", "P95",
+            "urgent_breach_rate", "same_day_rate", "within_3d_rate", "within_14d_rate"
+        ])
+        empty_gaps = pd.DataFrame(columns=["metric", "value"])
+        return empty_overall, empty_gaps
+
     # Overall by subgroup
     rows = []
     for g, gdf in df.groupby("subgroup"):
@@ -36,7 +54,7 @@ def equity_summary(df: pd.DataFrame) -> pd.DataFrame:
         })
     out = pd.DataFrame(rows)
     # P90/P95 gaps
-    if set(out["subgroup"]) >= {"A", "B"}:
+    if len(out) > 0 and set(out["subgroup"]) >= {"A", "B"}:
         a = out.set_index("subgroup").loc["A"]
         b = out.set_index("subgroup").loc["B"]
         gap = pd.DataFrame([{
@@ -51,6 +69,23 @@ def equity_summary(df: pd.DataFrame) -> pd.DataFrame:
     return out, gap
 
 def high_risk_same_day_share(df: pd.DataFrame, top_frac: float = 0.1) -> float:
+    """
+    Compute fraction of high-risk patients seen same-day.
+
+    Args:
+        df: DataFrame with patient events (should be filtered to attended=True)
+        top_frac: Fraction defining "high risk" (default: top 10%)
+
+    Returns:
+        Fraction of high-risk patients with wait_days <= 0
+    """
+    if len(df) == 0 or "pred_risk" not in df.columns:
+        return 0.0
+
     cutoff = df["pred_risk"].quantile(1 - top_frac)
     top = df[df["pred_risk"] >= cutoff]
+
+    if len(top) == 0:
+        return 0.0
+
     return float((top["wait_days"] <= 0).mean())
