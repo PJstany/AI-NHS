@@ -2,6 +2,7 @@ __pycache__/
 .pytest_cache/
 outputs/*
 !outputs/.gitkeep
+outputs_realistic/*/run_seed_*/
 .DS_Store
 *.parquet
 *.arrow
