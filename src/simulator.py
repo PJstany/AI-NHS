@@ -18,6 +18,7 @@ class Simulation:
         self.env = simpy.Environment()
         self.patients: List[Patient] = []
         self.backlog: List[Patient] = []
+        self.reneged_patients: List[Patient] = []  # Track patients who abandoned queue
         self.override_log: List[Dict] = []
         # Assume typical means; queue mean in log-scale is ~3–4 under load, time-of-day mean ~0
         mu_uncert, mu_queue, mu_tod = 0.5, 2.5, 0.0  # further reduced mu_queue from 3.0 to 2.5
@@ -111,16 +112,24 @@ class Simulation:
         """
         Remove patients who have exceeded their patience threshold.
         Update wait times for remaining patients.
+        FIXED: Now tracks reneged patients instead of silently dropping them.
         """
-        # Remove patients who renege (patience expired)
-        self.backlog = [
-            p for p in self.backlog
-            if (day - p.arrival_day) <= p.patience_days
-        ]
-
-        # Update wait times
+        remaining = []
         for p in self.backlog:
-            p.wait_days = max(0.0, day - p.arrival_day)
+            wait_so_far = day - p.arrival_day
+            if wait_so_far > p.patience_days:
+                # Patient reneged - record this failure!
+                p.reneged = True
+                p.reneged_day = day
+                p.wait_days = wait_so_far
+                p.attended = False
+                self.reneged_patients.append(p)
+            else:
+                # Patient still waiting
+                p.wait_days = max(0.0, wait_so_far)
+                remaining.append(p)
+        
+        self.backlog = remaining
 
     def _schedule_session(self, day: int, session: int, total_sessions: int) -> None:
         """
@@ -166,17 +175,27 @@ class Simulation:
         if not self.backlog:
             return None
 
-        # Sort by AI priority (higher pred_risk first, urgent before routine)
-        self.backlog.sort(
-            key=lambda p: (p.pred_risk, p.pclass == "urgent"),
-            reverse=True
-        )
+        scenario = self.cfg.sim.scenario
+        
+        # Sort based on scenario
+        if scenario == "baseline":
+            # FCFS: First-Come-First-Served (sort by arrival_day, urgent first)
+            self.backlog.sort(
+                key=lambda p: (p.pclass != "urgent", p.arrival_day, p.pid)
+            )
+        else:
+            # AI-based: Sort by predicted risk (higher first, urgent before routine)
+            # Used for: ai_only, imperfect_ai, hybrid
+            self.backlog.sort(
+                key=lambda p: (p.pred_risk, p.pclass == "urgent"),
+                reverse=True
+            )
 
         candidate = self.backlog[0]
         overridden = False
 
-        # Apply clinical override logic for hybrid scenario
-        if self.cfg.sim.scenario == "hybrid":
+        # Apply clinical override logic for hybrid scenario only
+        if scenario == "hybrid":
             candidate, overridden = self._apply_clinical_override(
                 candidate, day, session, time_of_day
             )
@@ -276,15 +295,17 @@ class Simulation:
     def _finalize_results(self) -> pd.DataFrame:
         """
         Convert simulation results to DataFrame and compute breach flags.
+        FIXED: Now includes reneged patients (the invisible victims).
 
         Returns:
             Complete results DataFrame
         """
-        # Combine attended patients and remaining backlog
-        all_patients = self.patients + self.backlog
+        # Combine ALL patients: attended, remaining backlog, AND reneged
+        all_patients = self.patients + self.backlog + self.reneged_patients
 
         df = pd.DataFrame([p.__dict__ for p in all_patients])
         df["wait_days"] = df["wait_days"].fillna(0.0)
+        df["reneged"] = df["reneged"].fillna(False)
 
         # Compute breach flags
         df["breach_same_day"] = df["wait_days"] > self.cfg.thresholds_days.same_day

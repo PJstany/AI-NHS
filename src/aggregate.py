@@ -10,6 +10,7 @@ from .metrics import kpi_flags, equity_summary, risk_deciles, high_risk_same_day
 def summarize(df: pd.DataFrame, thresholds: Dict[str, int], warmup_days: int = 0, compute_ci: bool = False) -> Dict:
     """
     Summarize simulation results with optional bootstrap confidence intervals.
+    FIXED: Now includes ALL patients (attended + reneged) for equity analysis.
 
     Args:
         df: Event dataframe from simulation
@@ -24,13 +25,19 @@ def summarize(df: pd.DataFrame, thresholds: Dict[str, int], warmup_days: int = 0
     if warmup_days and "arrival_day" in df.columns:
         df = df[df["arrival_day"] >= warmup_days].copy()
     df = kpi_flags(df, thresholds["same_day"], thresholds["within_3d"], thresholds["within_14d"])
-    overall, gaps = equity_summary(df[df["attended"] == True].copy())
-    deciles = risk_deciles(df[df["attended"] == True].copy())
-    high_share = high_risk_same_day_share(df[df["attended"] == True].copy())
+    
+    # FIXED: Include ALL patients (attended + reneged) for equity summary
+    # This captures the "invisible victims" who abandoned the queue
+    overall, gaps = equity_summary(df.copy())
+    
+    # For deciles and high-risk share, still use attended patients only
+    attended_df = df[df["attended"] == True].copy()
+    deciles = risk_deciles(attended_df)
+    high_share = high_risk_same_day_share(attended_df)
 
     # Add bootstrap CIs if requested
     if compute_ci:
-        overall = add_bootstrap_cis(df[df["attended"] == True].copy(), overall)
+        overall = add_bootstrap_cis(df.copy(), overall)
 
     return {
         "overall": overall.assign(high_risk_same_day_share=high_share),

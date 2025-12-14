@@ -1,0 +1,58 @@
+sim:
+  days: 90                 # Extended to allow doom spiral
+  sessions_per_day: 2
+  slots_per_session: 60
+  seeds: [101, 102, 103]
+  scenario: "hybrid"       # Will be overridden by CLI
+  utilization: 1.30        # 30% over capacity - severe stress
+
+arrivals:
+  urgent_rate_per_day: 18
+  routine_rate_per_day: 120
+  digital_access_gap:
+    A: 1.0
+    B: 0.8
+
+patience_days:
+  urgent_mean: 5           # Reduced from 7 - urgent patients less patient
+  routine_mean: 2          # Reduced from 3 - routine patients give up faster
+
+service_mixtures:
+  short_mean: 10
+  long_mean: 25
+  long_weight: 0.3
+
+no_show:
+  probability: 0.07
+  reschedule_rule: "backlog"
+
+bias_calibration:
+  slope:
+    A: 1.0
+    B: 0.8
+  intercept:
+    A: 0.0
+    B: 0.0
+  noise_sd:
+    A: 0.05
+    B: 0.10
+  score_inflation: 0.00
+
+overrides:
+  target_rate: 0.25
+  beta_uncertainty: 1.5
+  beta_queue: 0.1
+  beta_time_of_day: 0.2
+  sd_clinician_random_effect: 0.5
+
+thresholds_days:
+  same_day: 0
+  within_3d: 3
+  within_14d: 14
+
+output:
+  out_dir: "outputs"
+  write_overrides_log: true
+
+analysis:
+  warmup_days: 14

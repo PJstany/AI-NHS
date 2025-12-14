@@ -21,9 +21,10 @@ def risk_deciles(df: pd.DataFrame, by: str = "subgroup") -> pd.DataFrame:
 def equity_summary(df: pd.DataFrame) -> pd.DataFrame:
     """
     Compute equity summary statistics by subgroup.
+    FIXED: Now includes abandonment_rate to track reneged patients.
 
     Args:
-        df: DataFrame with patient events (should be filtered to attended=True)
+        df: DataFrame with patient events (includes reneged patients)
 
     Returns:
         Tuple of (overall_summary, equity_gaps) DataFrames
@@ -31,29 +32,47 @@ def equity_summary(df: pd.DataFrame) -> pd.DataFrame:
     # Handle empty dataframe
     if len(df) == 0 or "subgroup" not in df.columns:
         empty_overall = pd.DataFrame(columns=[
-            "subgroup", "n", "mean_wait", "median_wait", "P90", "P95",
-            "urgent_breach_rate", "same_day_rate", "within_3d_rate", "within_14d_rate"
+            "subgroup", "n", "n_reneged", "abandonment_rate", "mean_wait", "median_wait", 
+            "P90", "P95", "urgent_breach_rate", "same_day_rate", "within_3d_rate", "within_14d_rate"
         ])
         empty_gaps = pd.DataFrame(columns=["metric", "value"])
         return empty_overall, empty_gaps
 
+    # Ensure reneged column exists
+    if "reneged" not in df.columns:
+        df = df.copy()
+        df["reneged"] = False
+
     # Overall by subgroup
     rows = []
     for g, gdf in df.groupby("subgroup"):
+        n_total = len(gdf)
+        n_reneged = int(gdf["reneged"].sum())
+        abandonment_rate = n_reneged / n_total if n_total > 0 else 0.0
+        
+        # For wait stats, include ALL patients (survivors + reneged)
         q = quantiles(gdf["wait_days"])
+        
+        # For access rates, only count non-reneged patients
+        seen = gdf[~gdf["reneged"]]
+        n_seen = len(seen)
+        
         rows.append({
             "subgroup": g,
-            "n": len(gdf),
+            "n": n_total,
+            "n_reneged": n_reneged,
+            "abandonment_rate": float(abandonment_rate),
             "mean_wait": float(gdf["wait_days"].mean()),
             "median_wait": float(gdf["wait_days"].median()),
             **q,
             "urgent_breach_rate": float((gdf["pclass"].eq("urgent") & gdf["breach_3d"]).mean()),
-            "same_day_rate": float((gdf["wait_days"] <= 0).mean()),
-            "within_3d_rate": float((gdf["wait_days"] <= 3).mean()),
-            "within_14d_rate": float((gdf["wait_days"] <= 14).mean()),
+            "same_day_rate": float((seen["wait_days"] <= 0).mean()) if n_seen > 0 else 0.0,
+            "within_3d_rate": float((seen["wait_days"] <= 3).mean()) if n_seen > 0 else 0.0,
+            "within_14d_rate": float((seen["wait_days"] <= 14).mean()) if n_seen > 0 else 0.0,
         })
     out = pd.DataFrame(rows)
-    # P90/P95 gaps
+    
+    # P90/P95 gaps + abandonment gap
     if len(out) > 0 and set(out["subgroup"]) >= {"A", "B"}:
         a = out.set_index("subgroup").loc["A"]
         b = out.set_index("subgroup").loc["B"]
@@ -63,6 +82,9 @@ def equity_summary(df: pd.DataFrame) -> pd.DataFrame:
         }, {
             "metric": "P95_gap_B_minus_A",
             "value": float(b["P95"] - a["P95"])
+        }, {
+            "metric": "abandonment_gap_B_minus_A",
+            "value": float(b["abandonment_rate"] - a["abandonment_rate"])
         }])
     else:
         gap = pd.DataFrame(columns=["metric", "value"])

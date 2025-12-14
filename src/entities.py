@@ -20,4 +20,6 @@ class Patient:
     breach_3d: Optional[bool] = None
     breach_14d: Optional[bool] = None
     patience_days: float = field(default=7.0)
+    reneged: bool = False          # True if patient abandoned queue (exceeded patience)
+    reneged_day: Optional[int] = None  # Day when patient reneged
 
