@@ -1,0 +1,74 @@
+# Realistic NHS GP Clinic Parameters
+# Based on actual NHS performance data and GP practice statistics
+# Source references: NHS Digital, RCGP, NHS England performance reports
+
+sim:
+  days: 60                          # 2 months of operation (realistic evaluation period)
+  sessions_per_day: 2               # Morning and afternoon sessions (standard GP)
+  slots_per_session: 50             # 50 slots per session = 100 daily capacity
+  seeds: [301, 302, 303, 304, 305, 306, 307, 308, 309, 310,
+          311, 312, 313, 314, 315, 316, 317, 318, 319, 320,
+          321, 322, 323, 324, 325, 326, 327, 328, 329, 330]  # 30 seeds for robust estimates
+  scenario: "hybrid"                # AI with clinician override (most realistic scenario)
+  utilization: 1.0                  # Start at 100% capacity
+
+arrivals:
+  # Based on average GP practice with ~7,500 registered patients
+  # Average 15-20 urgent cases per day, 80-120 routine
+  urgent_rate_per_day: 15           # ~15% of appointments are urgent/same-day
+  routine_rate_per_day: 85          # Remaining routine appointments
+  digital_access_gap:
+    A: 1.0                          # Reference group (more affluent, better digital access)
+    B: 0.75                         # 25% digital access gap (evidence-based for deprived areas)
+
+patience_days:
+  # Based on NHS patient feedback surveys
+  urgent_mean: 5                    # Urgent patients wait up to ~5 days before giving up
+  routine_mean: 4                   # Routine patients tolerate ~4 days wait
+
+service_mixtures:
+  # Standard GP appointment lengths
+  short_mean: 10                    # Standard consultation: 10 minutes (NHS target)
+  long_mean: 20                     # Extended consultation: 20 minutes
+  long_weight: 0.25                 # ~25% need extended appointments (complex/multi-morbidity)
+
+no_show:
+  # NHS GP no-show rate typically 5-8%
+  probability: 0.06                 # 6% DNA (Did Not Attend) rate
+  reschedule_rule: "backlog"        # Rebooking policy
+
+bias_calibration:
+  # Realistic AI calibration bias based on healthcare AI literature
+  # Group B represents disadvantaged/minority populations with historically
+  # lower representation in training data
+  slope:
+    A: 1.0                          # Well-calibrated for majority group
+    B: 0.85                         # 15% under-prediction for minority (documented bias)
+  intercept:
+    A: 0.0
+    B: 0.15                         # Slight systematic offset
+  noise_sd:
+    A: 0.08                         # Standard prediction uncertainty
+    B: 0.12                         # Higher uncertainty for underrepresented group
+  score_inflation: 0.00
+
+overrides:
+  # Based on clinical decision-making research
+  target_rate: 0.22                 # ~22% override rate (evidence from AI-assisted triage studies)
+  beta_uncertainty: 1.8             # Clinicians more likely to override uncertain predictions
+  beta_queue: 0.08                  # Modest queue pressure effect
+  beta_time_of_day: 0.15            # End-of-session fatigue effect
+  sd_clinician_random_effect: 0.4   # Inter-clinician variation
+
+thresholds_days:
+  # NHS access targets
+  same_day: 0                       # Same-day urgent target
+  within_3d: 3                      # Within 3 days (good practice)
+  within_14d: 14                    # 14-day maximum wait (NHS standard)
+
+output:
+  out_dir: "outputs_realistic"
+  write_overrides_log: true
+
+analysis:
+  warmup_days: 10                   # 10-day warmup to stabilize system
