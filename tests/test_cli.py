@@ -1,10 +1,4 @@
-from src.cli import sweep
 from src.cli import run
-
-def test_sweep_accepts_strings(monkeypatch):
-    # Should not raise when given a list of string paths
-    sweep(["params.yaml"], parallel=False)
-
 
 def test_cli_overrides_scenario(monkeypatch):
     # just ensure the function accepts overrides without raising

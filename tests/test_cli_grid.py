@@ -1,4 +1,4 @@
-from click.testing import CliRunner
+from typer.testing import CliRunner
 from src.cli import app
 import glob, os
 
@@ -7,14 +7,14 @@ def test_run_grid_smoke(tmp_path):
     out_dir.mkdir(parents=True, exist_ok=True)
     runner = CliRunner()
     res = runner.invoke(app, [
-        "run_grid", "params.yaml",
+        "run-grid", "params.yaml",
         "--scenario", "hybrid",
-        "--util_list", "1.2",
+        "--util-list", "1.2",
         "--seeds", "1-2",
         "--days", "2",
-        "--n_jobs", "1",
-        "--out_dir", str(out_dir)
-    ], catch_exceptions=False)
+        "--n-jobs", "1",
+        "--out-dir", str(out_dir)
+    ])
     assert res.exit_code == 0
     matches = glob.glob(os.path.join(str(out_dir), "run_seed_*_hash_*"))
     assert len(matches) >= 2
