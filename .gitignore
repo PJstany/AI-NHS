@@ -5,3 +5,6 @@ outputs/*
 .DS_Store
 *.parquet
 *.arrow
+
+# Generated outputs (reproducible)
+outputs_realistic/
