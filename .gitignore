@@ -6,5 +6,11 @@ outputs/*
 *.parquet
 *.arrow
 
+# Virtual environment
+venv/
+
+# IDE config
+.idea/
+
 # Generated outputs (reproducible)
 outputs_realistic/
